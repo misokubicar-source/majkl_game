@@ -1,0 +1,292 @@
+/*vsetky kniznice a definicie*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+#include <time.h>
+#include <curses.h>
+#include <string.h>
+
+#define SIRKA_SVETU 40
+#define VYSKA_SVETU 8
+#define MAX_PREKAZOK 128
+
+
+#define FARBA_OKRAJ 1
+#define FARBA_HRAC  2
+#define FARBA_PREKAZKA 3
+#define FARBA_TEXT 4
+
+/* globalne polia pre prekazky */
+int prekazkaPoziciaD[MAX_PREKAZOK];
+
+int prekazkaPoziciaC[MAX_PREKAZOK];
+
+int prekazkaVelkostBloku[MAX_PREKAZOK];
+
+bool prekazkaAktivna[MAX_PREKAZOK];
+
+/* ncurses */
+void inicializuj_curses(void) {
+    initscr();
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
+    nodelay(stdscr, TRUE);
+    curs_set(0);
+
+    if (has_colors()) {
+        start_color();
+        init_pair(FARBA_OKRAJ, COLOR_YELLOW, COLOR_BLACK);
+        init_pair(FARBA_HRAC, COLOR_MAGENTA, COLOR_BLACK);
+        init_pair(FARBA_PREKAZKA, COLOR_YELLOW, COLOR_BLACK);
+        init_pair(FARBA_TEXT, COLOR_WHITE, COLOR_BLACK);
+    }
+}
+
+/* ukoncenie ncurses */
+void ukonci_curses(void) {
+    nodelay(stdscr, FALSE);
+    echo();
+    endwin();
+}
+
+/* vynulovanie prekazok na zaciatku */
+void inicializuj_prekazky(int pocet) {
+    for (int i = 0; i < pocet; i++) {
+        prekazkaAktivna[i] = false;
+        prekazkaPoziciaD[i] = 0;
+        prekazkaPoziciaC[i] = 0;
+        prekazkaVelkostBloku[i] = 0;
+    }
+}
+
+/* vykreslenie okraju */
+void vykresli_okraj(void) {
+    attron(COLOR_PAIR(FARBA_OKRAJ));
+
+
+    for (int c = 0; c < SIRKA_SVETU; c++) {
+        mvaddch(0, c, '#');
+        mvaddch(VYSKA_SVETU - 1, c, '#');
+    }
+
+
+    for (int r = 0; r < VYSKA_SVETU; r++) {
+        mvaddch(r, 0, '#');
+        mvaddch(r, SIRKA_SVETU - 1, '#');
+    }
+
+
+    attroff(COLOR_PAIR(FARBA_OKRAJ));
+}
+
+/* vykreslenie hraca M */
+void vykresli_hraca(int pozD, int pozC) {
+    attron(COLOR_PAIR(FARBA_HRAC));
+    mvaddch(pozD, pozC, 'M');
+    attroff(COLOR_PAIR(FARBA_HRAC));
+}
+
+
+/* vykreslenie vsetkych aktivnych prekazok */
+void vykresli_prekazky(int pocet) {
+    attron(COLOR_PAIR(FARBA_PREKAZKA));
+
+    for (int i = 0; i < pocet; i++) {
+        if (!prekazkaAktivna[i]) continue;
+
+
+        for (int j = 0; j < prekazkaVelkostBloku[i]; j++) {
+            int riadok = prekazkaPoziciaD[i] + j;
+            int stlpec = prekazkaPoziciaC[i];
+
+            if (riadok <= 0 || riadok >= VYSKA_SVETU - 1) continue;
+            if (stlpec <= 0 || stlpec >= SIRKA_SVETU - 1) continue;
+
+
+            mvaddch(riadok, stlpec, '&');
+        }
+    }
+
+    attroff(COLOR_PAIR(FARBA_PREKAZKA));
+}
+
+/* tu zobrazujem spodny panel */
+void vykresli_stav(int zivotiky, int levelik, int skore, int najskorecko) {
+    attron(COLOR_PAIR(FARBA_TEXT));
+
+    mvprintw(VYSKA_SVETU, 0,
+             "Zivoty: %d  Level: %d  Skore: %d  Highscore: %d",
+             zivotiky, levelik, skore, najskorecko);
+
+    attroff(COLOR_PAIR(FARBA_TEXT));
+}
+
+/* pridanie prekazok  */
+void pridaj_prekazku(int pocet) {
+    for (int i = 0; i < pocet; i++) {
+        if (!prekazkaAktivna[i]) {
+            prekazkaAktivna[i] = true;
+            prekazkaPoziciaC[i] = 1;
+
+            prekazkaVelkostBloku[i] = 1 + rand() % 3;
+
+            int minR = 1;
+            int maxR = (VYSKA_SVETU - 2) - (prekazkaVelkostBloku[i] - 1);
+            if (maxR < minR) maxR = minR;
+
+
+            prekazkaPoziciaD[i] = minR + rand() % (maxR - minR + 1);
+
+            return;
+        }
+    }
+}
+
+/* posun prekazok */
+void posun_prekazky(int pocet, int *preskocene, int *skorecko) {
+    for (int i = 0; i < pocet; i++) {
+        if (!prekazkaAktivna[i]) continue;
+
+        prekazkaPoziciaC[i]++;
+
+        if (prekazkaPoziciaC[i] >= SIRKA_SVETU - 1) {
+            prekazkaAktivna[i] = false;
+            (*preskocene)++;
+            (*skorecko)++;
+        }
+    }
+}
+
+/* stretnutie M, teda hraca s prekazkami */
+void skontroluj_kolizie(int pocet,
+                        int *zivotiky,
+                        int hracD, int hracC)
+{
+    for (int i = 0; i < pocet; i++) {
+        if (!prekazkaAktivna[i]) continue;
+
+
+        if (hracC != prekazkaPoziciaC[i]) continue;
+
+        int zac = prekazkaPoziciaD[i];
+
+        int kon = prekazkaPoziciaD[i] + prekazkaVelkostBloku[i] - 1;
+
+        if (hracD >= zac && hracD <= kon) {
+
+            (*zivotiky)--;
+            prekazkaAktivna[i] = false;
+        }
+    }
+}
+
+/* funkcia pre najvyssie dosiahnute skore */
+int nacitaj_highscore(const char *nazov) {
+    FILE *f = fopen(nazov, "r");
+    if (!f) return 0;
+
+    int h = 0;
+    fscanf(f, "%d", &h);
+    fclose(f);
+
+
+    return h;
+}
+
+/* ulozenie najvyssieho skore */
+void uloz_highscore(const char *nazov, int skore) {
+    FILE *f = fopen(nazov, "w");
+
+    if (!f) return;
+
+    fprintf(f, "%d\n", skore);
+    fclose(f);
+
+
+}
+
+/* majkl hra */
+int main(int argc, char *argv[]) {
+    const char *subor = "majkl_game_highscore.txt";  /*tu si ukladam najvyssie skore*/
+
+    int oneskorenie = 80; /*dellay a dole, moody pre hru s rychlejsim/pomalsym dellay*/
+    if (argc > 1) {
+        if (strcmp(argv[1], "--easy") == 0) oneskorenie = 120;
+        else if (strcmp(argv[1], "--hard") == 0) oneskorenie = 50;
+    }
+
+    srand(time(NULL));      /*inicializacia*/
+    inicializuj_curses();
+
+    int najskorecko = nacitaj_highscore(subor);
+
+    int hracD = VYSKA_SVETU / 2;        /* spawn M na hracom poli */
+    int hracC = SIRKA_SVETU - 2;
+
+    int zivotiky = 1;
+    int levelik = 1;
+    int skorecko = 0;
+    int preskocene = 0;
+
+    inicializuj_prekazky(MAX_PREKAZOK);
+
+    int tick = 0;
+    int spawn = 20;
+
+    bool bezi = true;
+
+    while (bezi) {
+        int klaves = getch();
+
+        if (klaves == 'q' || klaves == 'Q') bezi = false; /* qckom viem ukoncit hru */
+        else if (klaves == KEY_UP && hracD > 1) hracD--;
+        else if (klaves == KEY_DOWN && hracD < VYSKA_SVETU - 2) hracD++;
+
+        posun_prekazky(MAX_PREKAZOK, &preskocene, &skorecko);
+        skontroluj_kolizie(MAX_PREKAZOK, &zivotiky, hracD, hracC);
+
+        if (zivotiky <= 0) bezi = false;
+
+        if (preskocene >= 12) { /*bonus life*/
+            zivotiky++;
+            preskocene -= 12;
+        }
+
+        /*levelovanie hry(zrychlovanie)*/
+        int novaUroven = skorecko / 8 + 1;
+        if (novaUroven > levelik) {
+            levelik = novaUroven;
+            if (spawn > 4) spawn -= 2;
+            if (oneskorenie > 35) oneskorenie -= 5;
+        }
+
+        if (tick % spawn == 0) {
+            pridaj_prekazku(MAX_PREKAZOK);
+        }
+
+        /* vykreslovanie hry */
+        clear();
+        vykresli_okraj();
+        vykresli_prekazky(MAX_PREKAZOK);
+        vykresli_hraca(hracD, hracC);
+        vykresli_stav(zivotiky, levelik, skorecko, najskorecko);
+        refresh();
+
+        tick++;
+        napms(oneskorenie);
+    }
+
+    /* ukladanie vyssieho skore ak som dal rekord */
+    if (skorecko > najskorecko) {
+        uloz_highscore(subor, skorecko);
+    }
+
+    ukonci_curses();
+
+    
+    /*ende */
+    return 0;
+}
